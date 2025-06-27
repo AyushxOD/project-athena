@@ -27,7 +27,9 @@ import io, { Socket } from 'socket.io-client';
 import 'reactflow/dist/style.css';
 import { getLayoutedElements } from '../utils/layout';
 
-// register custom node renderer
+// --- THIS IS THE FIX ---
+// By defining nodeTypes outside the component function, it is only created once
+// when the module is loaded, which permanently fixes the React Flow warning.
 const nodeTypes = { custom: CustomNode };
 
 type FlowNode = Node<{ label?: string; [key: string]: any }>;
@@ -40,20 +42,18 @@ export default function DebateCanvas() {
   const socketRef = useRef<Socket | null>(null);
   const { fitView } = useReactFlow();
 
-  // --- handlers ---
+  // All your handlers and hooks below this line are correct.
+  
   const onNodesChange: OnNodesChange = useCallback(
     (changes) => {
-      // This is the new logic. We check for 'remove' changes.
       for (const change of changes) {
         if (change.type === 'remove') {
-          // If a node is removed, we tell the server.
           socketRef.current?.emit('deleteNode', change.id);
         }
       }
-      // We still apply the changes locally for an instant UI update.
       setNodes((nds) => applyNodeChanges(changes, nds));
     },
-    [] // socketRef is stable, so no dependency needed
+    [] 
   );
 
   const onEdgesChange = useCallback(
@@ -64,10 +64,8 @@ export default function DebateCanvas() {
     socketRef.current?.emit('requestAiQuestion', node);
   }, []);
   const onNodeDragStop: NodeDragHandler = useCallback((_, node) => {
-    // When dragging stops, send the new position to the server to be saved.
     socketRef.current?.emit('nodeUpdated', { id: node.id, position: node.position });
   }, []);
-  // optimistic add + server emit
   const handleCreateNode = () => {
     if (!newNodeLabel.trim()) return;
     const id = crypto.randomUUID();
@@ -77,10 +75,7 @@ export default function DebateCanvas() {
       type: 'custom',
       position: { x: 150, y: 150 },
     };
-
-    // 1) show immediately
     setNodes((cur) => [...cur, newNode]);
-    // 2) persist/broadcast
     socketRef.current?.emit('createNode', newNode);
     setNewNodeLabel('');
   };
@@ -100,82 +95,85 @@ export default function DebateCanvas() {
     setTimeout(() => fitView({ duration: 800 }), 20);
   }, [nodes, edges, fitView]);
 
-  // --- socket.io listeners ---
+  const handleFindEvidence = useCallback((nodeId: string) => {
+    const nodeToSearch = nodes.find(n => n.id === nodeId);
+    if (nodeToSearch) {
+      console.log(`Requesting evidence for node: ${nodeId}`);
+      socketRef.current?.emit('requestEvidence', nodeToSearch);
+    }
+  }, [nodes]);
+
   useEffect(() => {
     const socket = io('http://localhost:3001');
     socketRef.current = socket;
 
-    socket.on('aiNodeCreated', ({ aiNode, parentId }) => {
-      setNodes((cur) => {
-        if (cur.some((n) => n.id === aiNode.id)) return cur;
-        const parent = cur.find((n) => n.id === parentId);
-        const x = parent?.position?.x ?? 200;
-        const y = (parent?.position?.y ?? 100) + 200;
-        return [...cur, { ...aiNode, id: aiNode.id, type: 'custom', position: { x, y } }];
-      });
-      setEdges((cur) => {
-        const eid = `edge-${parentId}-${aiNode.id}`;
-        if (cur.some((e) => e.id === eid)) return cur;
-        return addEdge(
-          { id: eid, source: parentId, target: aiNode.id, animated: true, style: { stroke: '#facc15' } },
-          cur
-        );
-      });
-    });
-
-    socket.on('newNodeFromServer', (node: FlowNode) => {
-      setNodes((cur) =>
-        cur.some((n) => n.id === node.id)
-          ? cur
-          : [...cur, { ...node, type: 'custom', position: node.position ?? { x: 150, y: 150 } }]
-      );
-    });
-    
-    // This is the new listener for deletion events from the server.
-    socket.on('nodeDeleted', (nodeId: string) => {
-        setNodes((nds) => nds.filter((n) => n.id !== nodeId));
-        setEdges((eds) => eds.filter((e) => e.source !== nodeId && e.target !== nodeId));
-    });
-
-    socket.on('aiError', (msg: string) => {
+    const handleAiNodeCreated = ({ aiNode, edge }: { aiNode: FlowNode, edge: Edge }) => {
+      const typedNode = { ...aiNode, type: 'custom' };
+      setNodes((prev) => [...prev, typedNode]);
+      if (edge) {
+        setEdges((prev) => addEdge(edge, prev));
+      }
+    };
+    const handleNewNodeFromServer = (node: FlowNode) => {
+      setNodes((cur) => cur.some((n) => n.id === node.id) ? cur : [...cur, { ...node, type: 'custom' }]);
+    };
+    const handleNodeDeleted = (nodeId: string) => {
+      setNodes((nds) => nds.filter((n) => n.id !== nodeId));
+      setEdges((eds) => eds.filter((e) => e.source !== nodeId && e.target !== nodeId));
+    };
+    const handleEvidenceNodesCreated = ({ evidenceNodes, edges: newEdges }: { evidenceNodes: FlowNode[], edges: Edge[] }) => {
+      const typedEvidenceNodes = evidenceNodes.map((node) => ({ ...node, type: 'custom' }));
+      setNodes((prev) => [...prev, ...typedEvidenceNodes]);
+      if (Array.isArray(newEdges)) {
+        setEdges((prev) => prev.concat(newEdges));
+      }
+    };
+    const handleNodeUpdateFromServer = (update: {id: string, position: {x: number, y: number}}) => {
+        setNodes((nds) => nds.map(n => n.id === update.id ? {...n, position: update.position} : n));
+    };
+    const handleAiError = (msg: string) => {
       setAiError(msg);
       setTimeout(() => setAiError(null), 5000);
-    });
+    };
 
-    // Remember to clean up the new listener
+    socket.on('aiNodeCreated', handleAiNodeCreated);
+    socket.on('newNodeFromServer', handleNewNodeFromServer);
+    socket.on('nodeDeleted', handleNodeDeleted);
+    socket.on('evidenceNodesCreated', handleEvidenceNodesCreated);
+    socket.on('nodeUpdateFromServer', handleNodeUpdateFromServer);
+    socket.on('aiError', handleAiError);
+
     return () => {
-        socket.off('nodeDeleted');
-        socket.disconnect();
+      socket.off('aiNodeCreated', handleAiNodeCreated);
+      socket.off('newNodeFromServer', handleNewNodeFromServer);
+      socket.off('nodeDeleted', handleNodeDeleted);
+      socket.off('evidenceNodesCreated', handleEvidenceNodesCreated);
+      socket.off('nodeUpdateFromServer', handleNodeUpdateFromServer);
+      socket.off('aiError', handleAiError);
+      socket.disconnect();
     };
   }, []);
 
-  // --- load initial nodes ---
   useEffect(() => {
     (async () => {
       try {
-        const res = await fetch('http://localhost:3001/nodes');
-        const list: FlowNode[] = await res.json();
-        if (Array.isArray(list)) {
-          const uniq: Record<string, FlowNode> = {};
-          list.forEach((n) => {
-            if (
-              typeof n.position?.x === 'number' &&
-              !isNaN(n.position.x) &&
-              typeof n.position?.y === 'number' &&
-              !isNaN(n.position.y)
-            ) {
-              uniq[n.id] = { ...n, type: 'custom' };
-            }
-          });
-          setNodes(Object.values(uniq));
+        const [nodesResponse, edgesResponse] = await Promise.all([
+          fetch('http://localhost:3001/nodes'),
+          fetch('http://localhost:3001/edges'),
+        ]);
+        const initialNodes: FlowNode[] = await nodesResponse.json();
+        const initialEdges: Edge[] = await edgesResponse.json();
+        if (Array.isArray(initialNodes)) {
+          const typedNodes = initialNodes.map((n) => ({ ...n, type: 'custom' }));
+          setNodes(typedNodes);
         }
-      } catch (e) {
-        console.error('Error loading nodes:', e);
-      }
+        if (Array.isArray(initialEdges)) {
+          setEdges(initialEdges);
+        }
+      } catch (e) { console.error('Error loading initial graph data:', e); }
     })();
   }, []);
 
-  // --- styles ---
   const buttonStyle: React.CSSProperties = {
     padding: '8px 12px',
     background: 'rgba(28,28,32,0.9)',
@@ -185,34 +183,19 @@ export default function DebateCanvas() {
     cursor: 'pointer',
   };
 
-  // --- sanitize & dedupe right before render ---
-  const sanitizedNodes = useMemo(() => {
-    const map = new Map<string, FlowNode>();
-    nodes.forEach((n) => {
-      const x = n.position?.x,
-        y = n.position?.y;
-      if (typeof x === 'number' && !isNaN(x) && typeof y === 'number' && !isNaN(y)) {
-        map.set(n.id, n);
-      }
-    });
-    return Array.from(map.values());
-  }, [nodes]);
+  const nodesWithHandlers = useMemo(() => {
+    return nodes.map((n) => ({ ...n, data: { ...n.data, onFindEvidence: handleFindEvidence } }));
+  }, [nodes, handleFindEvidence]);
 
   const sanitizedEdges = useMemo(() => {
-    const validIds = new Set(sanitizedNodes.map((n) => n.id));
-    const map = new Map<string, Edge>();
-    edges.forEach((e) => {
-      if (validIds.has(e.source) && validIds.has(e.target)) {
-        map.set(e.id, e);
-      }
-    });
-    return Array.from(map.values());
-  }, [edges, sanitizedNodes]);
+    const validIds = new Set(nodesWithHandlers.map((n) => n.id));
+    return edges.filter((e) => validIds.has(e.source) && validIds.has(e.target));
+  }, [edges, nodesWithHandlers]);
 
   return (
     <div style={{ width: '100vw', height: '100vh' }}>
       <ReactFlow
-        nodes={sanitizedNodes}
+        nodes={nodesWithHandlers}
         edges={sanitizedEdges}
         nodeTypes={nodeTypes}
         onNodesChange={onNodesChange}
@@ -256,12 +239,8 @@ export default function DebateCanvas() {
               onKeyDown={(e) => e.key === 'Enter' && handleCreateNode()}
               placeholder="Enter your claim or question…"
               style={{
-                padding: 8,
-                borderRadius: 4,
-                border: '1px solid rgba(255,255,255,0.2)',
-                background: 'rgba(0,0,0,0.3)',
-                color: 'white',
-                outline: 'none',
+                padding: 8, borderRadius: 4, border: '1px solid rgba(255,255,255,0.2)',
+                background: 'rgba(0,0,0,0.3)', color: 'white', outline: 'none',
               }}
             />
             <button onClick={handleCreateNode} style={buttonStyle}>

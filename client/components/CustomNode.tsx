@@ -4,61 +4,83 @@
 import React, { memo } from 'react';
 import { Handle, Position, NodeProps } from 'reactflow';
 
-// This is an even more robust version of your custom node.
-// It will now render an error state instead of crashing if props are invalid.
-const CustomNode = (props: NodeProps) => {
-    // --- ULTRA-ROBUST FIX ---
-    // If the node props or the node ID is missing, we render a safe error state
-    // instead of crashing the entire application. This fixes the Handle error.
-    if (!props || !props.id) {
-        return (
-            <div style={{
-                padding: '10px',
-                background: '#ef4444', // Bright red
-                color: 'white',
-                borderRadius: '8px',
-                border: '2px solid white',
-            }}>
-                Error: Invalid Node Data Received
-            </div>
-        );
-    }
-    // --- END OF FIX ---
+// Define a more specific type for our node's data prop for better type safety
+type NodeData = {
+  label?: string;
+  url?: string;
+  type?: 'evidence' | 'ai_question';
+  onFindEvidence?: (nodeId: string) => void;
+};
 
-    const { id, data, selected } = props;
-    const label = data?.label || '[No Label]';
-    const isAINode = typeof label === 'string' && label.startsWith('AI Question:');
+const CustomNode = ({ id, data, selected }: NodeProps<NodeData>) => {
+  const label = data.label || '[No Label]';
+  const isAINode = typeof label === 'string' && label.startsWith('AI Question:');
+  const isEvidenceNode = data.type === 'evidence';
 
-    // Define styles here for clarity
-    const style: React.CSSProperties = {
-        padding: '15px 20px',
-        borderRadius: '12px',
-        color: 'white',
-        width: '250px',
-        textAlign: 'center',
-        border: selected ? '2px solid #60a5fa' : (isAINode ? '1px solid rgba(250, 204, 21, 0.5)' : '1px solid rgba(255, 255, 255, 0.1)'),
-        backgroundColor: isAINode ? 'rgba(50, 42, 16, 0.8)' : 'rgba(28, 28, 32, 0.8)',
-        backdropFilter: 'blur(10px)',
-    };
-    
-    return (
-        <div style={style}>
-            {/* These handles are the connection points for edges. */}
-            <Handle type="target" position={Position.Top} />
-            
-            {/* Display the safe label variable */}
-            <div>{label}</div>
+  // Define base styles
+  const baseStyle: React.CSSProperties = {
+    padding: '15px 20px',
+    borderRadius: '12px',
+    color: 'white',
+    width: '250px',
+    textAlign: 'center',
+    border: selected ? '2px solid #60a5fa' : '1px solid rgba(255, 255, 255, 0.2)',
+    backgroundColor: 'rgba(28, 28, 32, 0.8)',
+    backdropFilter: 'blur(12px)',
+    boxShadow: '0 8px 32px 0 rgba(0, 0, 0, 0.37)',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '10px',
+  };
 
-            {/* --- DEBUG VIEW --- */}
-            {/* This small text helps us see the node's unique ID */}
-            <div style={{ fontSize: '10px', color: '#9ca3af', marginTop: '10px' }}>
-                ID: {id}
-            </div>
-            {/* --- END DEBUG VIEW --- */}
+  const aiStyle: React.CSSProperties = { ...baseStyle, border: '1px solid rgba(250, 204, 21, 0.6)' };
+  
+  const evidenceStyle: React.CSSProperties = { 
+    ...baseStyle, 
+    border: '1px solid rgba(34, 197, 94, 0.6)',
+    backgroundColor: 'rgba(16, 40, 28, 0.8)',
+  };
+  
+  const getStyle = () => {
+    if (isEvidenceNode) return evidenceStyle;
+    if (isAINode) return aiStyle;
+    return baseStyle;
+  };
 
-            <Handle type="source" position={Position.Bottom} />
-        </div>
-    );
+  // Consistent button style
+  const buttonStyle: React.CSSProperties = {
+    padding: '6px 10px',
+    background: 'rgba(75, 85, 99, 0.7)',
+    color: 'white',
+    border: '1px solid rgba(255, 255, 255, 0.1)',
+    borderRadius: 6,
+    cursor: 'pointer',
+    marginTop: '5px',
+    fontSize: '12px'
+  };
+
+  // --- THIS IS THE FIX ---
+  // The entire block of JSX is now correctly wrapped in parentheses `()`.
+  return (
+    <div style={getStyle()}>
+      <Handle type="target" position={Position.Top} style={{ background: '#555' }} />
+      <div>{label}</div>
+      
+      {isEvidenceNode && data.url && (
+        <a href={data.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: '12px', color: '#10b981', display: 'block' }}>
+          View Source ↗
+        </a>
+      )}
+
+      {!isAINode && !isEvidenceNode && (
+          <button onClick={() => data.onFindEvidence?.(id)} style={buttonStyle}>
+            Find Evidence
+          </button>
+      )}
+
+      <Handle type="source" position={Position.Bottom} style={{ background: '#555' }} />
+    </div>
+  );
 };
 
 export default memo(CustomNode);

@@ -14,7 +14,7 @@ export const getLayoutedElements = (nodes: Node[], edges: Edge[]) => {
     dagreGraph.setGraph({
         rankdir: 'TB',
         nodesep: 200,  // Horizontal separation between nodes
-        ranksep: 150, // Vertical separation between levels
+        ranksep: 175, // Vertical separation between levels
       });
 
   nodes.forEach((node) => {
