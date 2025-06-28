@@ -2,7 +2,7 @@
 // This is the complete, final, and correct version with all handlers sending the canvasId.
 
 'use client';
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+const API_URL =  (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001').replace(/\/$/, '');
 
 import React, {
   useEffect,
@@ -49,6 +49,9 @@ type FlowNode = Node<NodeData>;
 
 
 const nodeTypes = { custom: CustomNode };
+// --- THIS IS THE FIX ---
+// We define the base API URL once and ensure it has no trailing slash.
+
 
 
 export default function DebateCanvas({ canvasId }: { canvasId: string }) {
