@@ -34,8 +34,21 @@ import io, { Socket } from 'socket.io-client';
 import 'reactflow/dist/style.css';
 import { getLayoutedElements } from '../utils/layout';
 
+// --- THIS IS THE FIX ---
+// We create a specific type for the data inside our nodes, instead of using 'any'.
+type NodeData = {
+  label?: string;
+  url?: string;
+  type?: 'evidence' | 'ai_question';
+  depth?: number;
+  onFindEvidence?: (nodeId: string) => void;
+};
+type FlowNode = Node<NodeData>;
+// --- END OF FIX ---
+
+
 const nodeTypes = { custom: CustomNode };
-type FlowNode = Node<{ label?: string; [key: string]: any }>;
+
 
 export default function DebateCanvas({ canvasId }: { canvasId: string }) {
   const [nodes, setNodes] = useState<FlowNode[]>([]);
