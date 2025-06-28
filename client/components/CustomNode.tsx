@@ -44,7 +44,7 @@
      };
      
      const getStyle = () => {
-       let style = { ...baseStyle };
+       const style = { ...baseStyle };
    
        // Determine background color based on type or depth
        const depth = data.depth ?? 0;

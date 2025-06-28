@@ -5,7 +5,7 @@ import { useState, useEffect } from 'react';
 import { useSupabaseClient, useUser } from '@supabase/auth-helpers-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { motion, AnimatePresence, Variants } from 'framer-motion';
+import { motion, Variants } from 'framer-motion';
 import { LogOut, ArrowRight, Plus, BrainCircuit } from 'lucide-react';
 
 type Canvas = {

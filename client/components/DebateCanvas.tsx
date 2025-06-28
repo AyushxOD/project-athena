@@ -180,7 +180,8 @@ export default function DebateCanvas({ canvasId }: { canvasId: string }) {
         cur.filter((e) => e.source !== nodeId && e.target !== nodeId),
       );
     };
-    const handleNodeUpdateFromServer = ({ id, position }) => {
+    const handleNodeUpdateFromServer = (payload: { id: string; position: { x: number, y: number } }) => {
+      const { id, position } = payload;
       setNodes((cur) => cur.map((n) => (n.id === id ? { ...n, position } : n)));
     };
     const handleAiNodeCreated = ({ aiNode, edge }: { aiNode: FlowNode; edge: Edge }) => {
