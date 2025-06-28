@@ -1,5 +1,6 @@
 'use client';
 
+
 import { useState, useEffect } from 'react';
 import { useSupabaseClient, useUser } from '@supabase/auth-helpers-react';
 import Link from 'next/link';
@@ -59,7 +60,7 @@ export default function Lobby() {
   // The main div now uses `justify-center` and has less top padding (`pt-20`)
   // to better center the content vertically within the viewport.
   return (
-    <div className="relative z-10 w-full min-h-screen text-white p-8 flex flex-col items-center justify-center pt-20 overflow-hidden">
+<div className="relative z-10 w-full min-h-screen text-white p-8 flex flex-col items-center justify-center pt-20 bg-gray-900/60 backdrop-blur-sm overflow-hidden">
       
       <motion.div
         initial={{ opacity: 0, y: -20 }}
@@ -171,7 +172,7 @@ export default function Lobby() {
                     >
                         {/* subtle light sweep */}
                         <span className="absolute inset-0 bg-white/10 opacity-0 group-hover:opacity-30 animate-[pulse_2s_infinite] pointer-events-none rounded-2xl transition-opacity" />
-                        <h3 className="relative text-2xl font-bold mb-2 text-white group-hover:text-indigo-200 transition-colors duration-300">
+                        <h3 className="relative text-2xl font-bold mb-2 text-blue-300 group-hover:text-indigo-200 transition-colors duration-300">
                             {canvas.title}
                         </h3>
                         <div className="relative flex items-center text-yellow-400 font-semibold opacity-0 group-hover:opacity-100 transition-opacity duration-300 text-sm">
