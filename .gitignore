@@ -25,3 +25,7 @@ __pycache__/
 # VS Code settings
 .vscode/
 .venv/
+
+client/.git
+server/.git
+ai-service/.git
