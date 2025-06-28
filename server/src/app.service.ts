@@ -1,10 +1,12 @@
+// server/src/app.service.ts
+
 import { Inject, Injectable } from '@nestjs/common';
 import * as postgres from 'postgres';
 
 export type Node = {
   id: string;
   position: { x: number; y: number };
-  data: { 
+  data: {
     label: string;
     url?: string;
     type?: 'evidence' | 'ai_question';
@@ -23,50 +25,54 @@ export class AppService {
   constructor(@Inject('PG_CONNECTION') private sql: postgres.Sql) {}
 
   async getNodes(): Promise<Node[]> {
-    const rawNodes = await this.sql<any[]>`SELECT id, "position", "data" FROM nodes`;
-    return rawNodes.map(node => ({
-      ...node,
-      position: typeof node.position === 'string' ? JSON.parse(node.position) : node.position,
-      data: typeof node.data === 'string' ? JSON.parse(node.data) : node.data,
+    const raw = await this.sql<any[]>`SELECT id, "position", "data" FROM nodes`;
+    return raw.map((r) => ({
+      id: r.id,
+      position: typeof r.position === 'string' ? JSON.parse(r.position) : r.position,
+      data: typeof r.data === 'string' ? JSON.parse(r.data) : r.data,
     }));
   }
-  
+
   async createNode(newNode: Node): Promise<Node> {
-    const { id, data, position } = newNode;
-    const positionJson = JSON.stringify(position);
-    const dataJson = JSON.stringify(data);
-    const result = await this.sql<any[]>`
+    const res = await this.sql<any[]>`
       INSERT INTO nodes (id, "position", "data")
-      VALUES (${id}, ${positionJson}, ${dataJson}) RETURNING *
+      VALUES (${newNode.id}, ${JSON.stringify(newNode.position)}, ${JSON.stringify(newNode.data)})
+      RETURNING *
     `;
-    const savedNode = result[0];
+    const saved = res[0];
     return {
-        ...savedNode,
-        position: typeof savedNode.position === 'string' ? JSON.parse(savedNode.position) : savedNode.position,
-        data: typeof savedNode.data === 'string' ? JSON.parse(savedNode.data) : savedNode.data,
+      id: saved.id,
+      position: typeof saved.position === 'string' ? JSON.parse(saved.position) : saved.position,
+      data: typeof saved.data === 'string' ? JSON.parse(saved.data) : saved.data,
     };
   }
-  
-  async getEdges(): Promise<Edge[]> {
-    const edges = await this.sql<Edge[]>`SELECT id, source, target, animated FROM edges`;
-    return edges;
+
+  async updateNodePosition(id: string, position: { x: number; y: number }): Promise<void> {
+    await this.sql`
+      UPDATE nodes
+      SET "position" = ${JSON.stringify(position)}
+      WHERE id = ${id}
+    `;
   }
 
-  // --- THIS METHOD IS NOW FIXED ---
+  async getEdges(): Promise<Edge[]> {
+    return this.sql<Edge[]>`SELECT id, source, target, animated FROM edges`;
+  }
+
   async createEdge(newEdge: Edge): Promise<Edge> {
-    const { id, source, target, animated } = newEdge;
-    // We use the nullish coalescing operator '??' to provide a default value of 'true'
-    // if 'animated' is undefined. This satisfies TypeScript and the database.
-    const result = await this.sql<Edge[]>`
+    const res = await this.sql<Edge[]>`
       INSERT INTO edges (id, source, target, animated)
-      VALUES (${id}, ${source}, ${target}, ${animated ?? true}) RETURNING *
+      VALUES (${newEdge.id}, ${newEdge.source}, ${newEdge.target}, ${newEdge.animated ?? true})
+      RETURNING *
     `;
-    return result[0];
+    return res[0];
   }
 
   async deleteNode(nodeId: string): Promise<{ id: string }> {
-    const result = await this.sql<{ id: string }[]>`DELETE FROM nodes WHERE id = ${nodeId} RETURNING id`;
-    if (result.length === 0) throw new Error(`Could not find node with id ${nodeId} to delete.`);
-    return result[0];
+    const res = await this.sql<{ id: string }[]>`
+      DELETE FROM nodes WHERE id = ${nodeId} RETURNING id
+    `;
+    if (res.length === 0) throw new Error(`Node ${nodeId} not found.`);
+    return res[0];
   }
 }

@@ -1,246 +1,283 @@
+// Location: client/components/DebateCanvas.tsx
+'use client';
 
-/* ======================================================================
-    File #2: client/components/DebateCanvas.tsx
-    This is the complete, final version with the depth calculation logic.
-   ====================================================================== */
-   import React, {
-    useEffect,
-    useState,
-    useRef,
-    useCallback,
-    useMemo,
-  } from 'react';
-  import ReactFlow, {
-    MiniMap,
-    Controls,
-    Panel,
-    useReactFlow,
-    Node,
-    NodeDragHandler,
-    OnNodesChange,
-    applyNodeChanges,
-    applyEdgeChanges,
-    Edge,
-    EdgeChange,
-    addEdge,
-  } from 'reactflow';
-  import CustomNode from './CustomNode';
-  import io, { Socket } from 'socket.io-client';
-  import 'reactflow/dist/style.css';
-  import { getLayoutedElements } from '../utils/layout';
-  
-  const nodeTypes = { custom: CustomNode };
-  type FlowNode = Node<{ label?: string; [key: string]: any }>;
-  
-  export default function DebateCanvas() {
-    const [nodes, setNodes] = useState<FlowNode[]>([]);
-    const [edges, setEdges] = useState<Edge[]>([]);
-    const [aiError, setAiError] = useState<string | null>(null);
-    const [newNodeLabel, setNewNodeLabel] = useState('');
-    const socketRef = useRef<Socket | null>(null);
-    const { fitView } = useReactFlow();
-  
-    const onNodesChange: OnNodesChange = useCallback((changes) => {
-      for (const change of changes) {
-        if (change.type === 'remove') {
-          socketRef.current?.emit('deleteNode', change.id);
-        }
-      }
-      setNodes((nds) => applyNodeChanges(changes, nds));
-    }, []);
-  
-    const onEdgesChange = useCallback((changes: EdgeChange[]) => setEdges((eds) => applyEdgeChanges(changes, eds)),[]);
-    
-    const onNodeDoubleClick: NodeDragHandler = useCallback((_, node) => {
+import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
+import ReactFlow, {
+  MiniMap,
+  Controls,
+  Background,
+  BackgroundVariant,
+  Panel,
+  Node,
+  NodeDragHandler,
+  OnNodesChange,
+  applyNodeChanges,
+  applyEdgeChanges,
+  Edge,
+  EdgeChange,
+  addEdge,
+  useReactFlow,
+} from 'reactflow';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Loader2, RefreshCw, Edit2, BookOpen } from 'lucide-react';
+import CustomNode from './CustomNode';
+import io, { Socket } from 'socket.io-client';
+import 'reactflow/dist/style.css';
+import { getLayoutedElements } from '../utils/layout';
+
+// Type for nodes
+type FlowNode = Node<{ label?: string; [key: string]: any }>;
+const nodeTypes = { custom: CustomNode };
+
+export default function DebateCanvas() {
+  // State
+  const [nodes, setNodes] = useState<FlowNode[]>([]);
+  const [edges, setEdges] = useState<Edge[]>([]);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [newNodeLabel, setNewNodeLabel] = useState('');
+  const [aiSummary, setAiSummary] = useState<string | null>(null);
+  const [loading, setLoading] = useState({ summary: false, question: false, evidence: false });
+
+  // React Flow instance
+  const { fitView } = useReactFlow();
+  const socketRef = useRef<Socket | null>(null);
+
+  // Node / edge change handlers
+  const onNodesChange: OnNodesChange = useCallback(
+    (changes) => setNodes((nds) => applyNodeChanges(changes, nds)),
+    []
+  );
+  const onEdgesChange = useCallback(
+    (changes: EdgeChange[]) => setEdges((eds) => applyEdgeChanges(changes, eds)),
+    []
+  );
+
+  // Double-click for AI question
+  const onNodeDoubleClick: NodeDragHandler = useCallback(
+    (_, node) => {
+      if (loading.question) return;
+      setLoading((l) => ({ ...l, question: true }));
       socketRef.current?.emit('requestAiQuestion', node);
-    }, []);
-    
-    const onNodeDragStop: NodeDragHandler = useCallback((_, node) => {
+    },
+    [loading.question]
+  );
+
+  // Drag stop persists position
+  const onNodeDragStop: NodeDragHandler = useCallback(
+    (_, node) => {
       socketRef.current?.emit('nodeUpdated', { id: node.id, position: node.position });
-    }, []);
-    
-    const handleCreateNode = () => {
-      if (!newNodeLabel.trim()) return;
-      const id = crypto.randomUUID();
-      const newNode: FlowNode = { id, data: { label: newNodeLabel }, type: 'custom', position: { x: 150, y: 150 } };
-      setNodes((cur) => [...cur, newNode]);
-      socketRef.current?.emit('createNode', newNode);
-      setNewNodeLabel('');
-    };
-  
-    const onLayout = useCallback(() => {
-      if (nodes.length === 0) return;
-      const { nodes: ln, edges: le } = getLayoutedElements(nodes, edges);
-      const validNodes = ln.filter(
-        (n) => typeof n.position?.x === 'number' && !isNaN(n.position.x) && typeof n.position?.y === 'number' && !isNaN(n.position.y)
-      );
-      setNodes(validNodes);
-      setEdges(le);
-      setTimeout(() => fitView({ duration: 800 }), 20);
-    }, [nodes, edges, fitView]);
-  
-    const handleFindEvidence = useCallback((nodeId: string) => {
-      const nodeToSearch = nodes.find(n => n.id === nodeId);
-      if (nodeToSearch) {
-        socketRef.current?.emit('requestEvidence', nodeToSearch);
+    },
+    []
+  );
+
+  // Create new node
+  const handleCreateNode = useCallback(() => {
+    if (!newNodeLabel.trim()) return;
+    const id = crypto.randomUUID();
+    const newNode: FlowNode = { id, data: { label: newNodeLabel }, type: 'custom', position: { x: 150, y: 150 } };
+    setNodes((cur) => [...cur, newNode]);
+    socketRef.current?.emit('createNode', newNode);
+    setNewNodeLabel('');
+  }, [newNodeLabel]);
+
+  // Load initial graph from server
+  useEffect(() => {
+    (async () => {
+      try {
+        const [nr, er] = await Promise.all([
+          fetch('http://localhost:3001/nodes'),
+          fetch('http://localhost:3001/edges'),
+        ]);
+        const initNodes: FlowNode[] = await nr.json();
+        const initEdges: Edge[] = await er.json();
+        setNodes(initNodes.map((n) => ({ ...n, type: 'custom' })));
+        setEdges(initEdges);
+      } catch (e) {
+        console.error('Error loading graph data:', e);
       }
-    }, [nodes]);
-  
-    useEffect(() => {
-      const socket = io('http://localhost:3001');
-      socketRef.current = socket;
-  
-      const handleAiNodeCreated = ({ aiNode, edge }: { aiNode: FlowNode, edge: Edge }) => {
-        const typedNode = { ...aiNode, type: 'custom' };
-        setNodes((prev) => [...prev, typedNode]);
-        if (edge) setEdges((prev) => addEdge(edge, prev));
-      };
-      const handleNewNodeFromServer = (node: FlowNode) => {
-        setNodes((cur) => cur.some((n) => n.id === node.id) ? cur : [...cur, { ...node, type: 'custom' }]);
-      };
-      const handleNodeDeleted = (nodeId: string) => {
-        setNodes((nds) => nds.filter((n) => n.id !== nodeId));
-        setEdges((eds) => eds.filter((e) => e.source !== nodeId && e.target !== nodeId));
-      };
-      const handleEvidenceNodesCreated = ({ evidenceNodes, edges: newEdges }: { evidenceNodes: FlowNode[], edges: Edge[] }) => {
-        const typedEvidenceNodes = evidenceNodes.map((node) => ({ ...node, type: 'custom' }));
-        setNodes((prev) => [...prev, ...typedEvidenceNodes]);
-        if (Array.isArray(newEdges)) setEdges((prev) => prev.concat(newEdges));
-      };
-      const handleNodeUpdateFromServer = (update: {id: string, position: {x: number, y: number}}) => {
-          setNodes((nds) => nds.map(n => n.id === update.id ? {...n, position: update.position} : n));
-      };
-      const handleAiError = (msg: string) => {
-        setAiError(msg);
-        setTimeout(() => setAiError(null), 5000);
-      };
-  
-      socket.on('aiNodeCreated', handleAiNodeCreated);
-      socket.on('newNodeFromServer', handleNewNodeFromServer);
-      socket.on('nodeDeleted', handleNodeDeleted);
-      socket.on('evidenceNodesCreated', handleEvidenceNodesCreated);
-      socket.on('nodeUpdateFromServer', handleNodeUpdateFromServer);
-      socket.on('aiError', handleAiError);
-  
-      return () => {
-        socket.off('aiNodeCreated', handleAiNodeCreated);
-        socket.off('newNodeFromServer', handleNewNodeFromServer);
-        socket.off('nodeDeleted', handleNodeDeleted);
-        socket.off('evidenceNodesCreated', handleEvidenceNodesCreated);
-        socket.off('nodeUpdateFromServer', handleNodeUpdateFromServer);
-        socket.off('aiError', handleAiError);
-        socket.disconnect();
-      };
-    }, []);
-  
-    useEffect(() => {
-      (async () => {
-        try {
-          const [nodesResponse, edgesResponse] = await Promise.all([
-            fetch('http://localhost:3001/nodes'),
-            fetch('http://localhost:3001/edges'),
-          ]);
-          const initialNodes: FlowNode[] = await nodesResponse.json();
-          const initialEdges: Edge[] = await edgesResponse.json();
-          if (Array.isArray(initialNodes)) {
-            const typedNodes = initialNodes.map((n) => ({ ...n, type: 'custom' }));
-            setNodes(typedNodes);
-          }
-          if (Array.isArray(initialEdges)) {
-            setEdges(initialEdges);
-          }
-        } catch (e) { console.error('Error loading initial graph data:', e); }
-      })();
-    }, []);
-  
-    // --- THIS IS THE NEW LOGIC FOR CALCULATING DEPTH ---
-    const nodesWithDepth = useMemo(() => {
-      if (nodes.length === 0) return [];
-      const nodeDepths = new Map<string, number>();
-      const edgesBySource = new Map<string, string[]>();
-      nodes.forEach(n => edgesBySource.set(n.id, []));
-      edges.forEach(e => {
-          if(edgesBySource.has(e.source)) {
-              edgesBySource.get(e.source)!.push(e.target);
-          }
-      });
-  
-      const targets = new Set(edges.map(e => e.target));
-      const rootNodes = nodes.filter(n => !targets.has(n.id));
-      
-      const queue: [string, number][] = rootNodes.map(n => [n.id, 0]);
-      const visited = new Set(rootNodes.map(n => n.id));
-  
-      while (queue.length > 0) {
-        const [nodeId, depth] = queue.shift()!;
-        nodeDepths.set(nodeId, depth);
-        const children = edgesBySource.get(nodeId) || [];
-        for (const childId of children) {
-          if (!visited.has(childId)) {
-            visited.add(childId);
-            queue.push([childId, depth + 1]);
-          }
-        }
-      }
-      return nodes.map(n => ({...n, data: { ...n.data, depth: nodeDepths.get(n.id) ?? 0 }}));
-    }, [nodes, edges]);
-  
-    const buttonStyle: React.CSSProperties = {
-      padding: '8px 12px', background: 'rgba(28,28,32,0.9)', color: 'white',
-      border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6, cursor: 'pointer',
-    };
-  
-    const nodesWithHandlers = useMemo(() => {
-      return nodesWithDepth.map((n) => ({ ...n, data: { ...n.data, onFindEvidence: handleFindEvidence } }));
-    }, [nodesWithDepth, handleFindEvidence]);
-  
-    const sanitizedEdges = useMemo(() => {
-      const validIds = new Set(nodesWithHandlers.map((n) => n.id));
-      return edges.filter((e) => validIds.has(e.source) && validIds.has(e.target));
-    }, [edges, nodesWithHandlers]);
-  
-    return (
-      <div style={{ width: '100vw', height: '100vh' }}>
-        <ReactFlow
-          nodes={nodesWithHandlers}
-          edges={sanitizedEdges}
-          nodeTypes={nodeTypes}
-          onNodesChange={onNodesChange}
-          onEdgesChange={onEdgesChange}
-          onNodeDoubleClick={onNodeDoubleClick}
-          onNodeDragStop={onNodeDragStop}
-          fitView
-        >
-          <Panel position="top-center">
-            {aiError && (
-              <div style={{ padding: 12, background: 'rgba(239,68,68,0.9)', color: 'white', borderRadius: 6 }}>
-                {aiError}
-              </div>
-            )}
+    })();
+  }, []);
+
+  // Socket.io setup
+  useEffect(() => {
+    const socket = io('http://localhost:3001');
+    socketRef.current = socket;
+
+    socket.on('newNodeFromServer', (node: FlowNode) => {
+      setNodes((cur) => (cur.some((n) => n.id === node.id) ? cur : [...cur, { ...node, type: 'custom' }]));
+    });
+    socket.on('nodeDeleted', (nodeId: string) => {
+      setNodes((cur) => cur.filter((n) => n.id !== nodeId));
+      setEdges((cur) => cur.filter((e) => e.source !== nodeId && e.target !== nodeId));
+    });
+    socket.on('nodeUpdateFromServer', ({ id, position }) => {
+      setNodes((cur) => cur.map((n) => (n.id === id ? { ...n, position } : n)));
+    });
+    socket.on('aiNodeCreated', ({ aiNode, edge }: { aiNode: FlowNode; edge: Edge }) => {
+      setLoading((l) => ({ ...l, question: false }));
+      setNodes((cur) => [...cur, { ...aiNode, type: 'custom' }]);
+      setEdges((cur) => addEdge(edge, cur));
+    });
+    socket.on('evidenceNodesCreated', ({ evidenceNodes, edges: newEdges }: { evidenceNodes: FlowNode[]; edges: Edge[] }) => {
+      setLoading((l) => ({ ...l, evidence: false }));
+      setNodes((cur) => [...cur, ...evidenceNodes.map((n) => ({ ...n, type: 'custom' }))]);
+      setEdges((cur) => [...cur, ...newEdges]);
+    });
+    socket.on('aiSummaryCreated', (summary: string) => {
+      setLoading((l) => ({ ...l, summary: false }));
+      setAiSummary(summary);
+    });
+    socket.on('aiError', (msg: string) => {
+      setAiError(msg);
+      setLoading({ summary: false, question: false, evidence: false });
+      setTimeout(() => setAiError(null), 3000);
+    });
+
+    return () => socket.disconnect();
+  }, []);
+
+  // Sanitize nodes (no NaN positions)
+  const sanitizedNodes = useMemo(
+    () =>
+      nodes.filter(
+        (n) => typeof n.position?.x === 'number' && !isNaN(n.position.x) &&
+               typeof n.position?.y === 'number' && !isNaN(n.position.y)
+      ),
+    [nodes]
+  );
+
+  // Compute depth
+  const nodesWithDepth = useMemo(() => {
+    const depthMap = new Map<string, number>();
+    const childrenMap = new Map<string, string[]>();
+    sanitizedNodes.forEach((n) => childrenMap.set(n.id, []));
+    edges.forEach((e) => childrenMap.get(e.source)?.push(e.target));
+    const roots = sanitizedNodes.filter((n) => !edges.some((e) => e.target === n.id));
+    const queue: [string, number][] = roots.map((r) => [r.id, 0]);
+    while (queue.length) {
+      const [nid, d] = queue.shift()!;
+      depthMap.set(nid, d);
+      childrenMap.get(nid)?.forEach((cid) => queue.push([cid, d + 1]));
+    }
+    return sanitizedNodes.map((n) => ({ ...n, data: { ...n.data, depth: depthMap.get(n.id) ?? 0 } }));
+  }, [sanitizedNodes, edges]);
+
+  // Attach evidence handler to nodes
+  const handleFindEvidence = useCallback(
+    (nodeId: string) => {
+      if (loading.evidence) return;
+      setLoading((l) => ({ ...l, evidence: true }));
+      const node = nodes.find((n) => n.id === nodeId);
+      if (node) socketRef.current?.emit('requestEvidence', node);
+    },
+    [nodes, loading.evidence]
+  );
+
+  const nodesWithHandlers = useMemo(
+    () => nodesWithDepth.map((n) => ({ ...n, data: { ...n.data, onFindEvidence: handleFindEvidence } })),
+    [nodesWithDepth, handleFindEvidence]
+  );
+
+  const sanitizedEdges = useMemo(
+    () => {
+      const valid = new Set(nodesWithHandlers.map((n) => n.id));
+      return edges.filter((e) => valid.has(e.source) && valid.has(e.target));
+    },
+    [edges, nodesWithHandlers]
+  );
+
+  // Layout function
+  const onLayout = useCallback(() => {
+    if (nodesWithHandlers.length === 0) return;
+    const { nodes: ln, edges: le } = getLayoutedElements(nodesWithHandlers, sanitizedEdges);
+    setNodes(ln);
+    setEdges(le);
+    setTimeout(() => fitView({ duration: 800 }), 20);
+  }, [nodesWithHandlers, sanitizedEdges, fitView]);
+
+  // Summarize debate
+  const onSummarize = useCallback(() => {
+    setLoading((l) => ({ ...l, summary: true }));
+    setAiError(null);
+    socketRef.current?.emit('requestSummary', {
+      nodes: nodes.map((n) => ({ id: n.id, label: n.data.label })),
+      edges: edges.map((e) => ({ source: e.source, target: e.target })),
+    });
+  }, [nodes, edges]);
+
+  return (
+    <div className="w-screen h-screen bg-gray-900">
+      <ReactFlow
+        nodes={nodesWithHandlers}
+        edges={sanitizedEdges}
+        nodeTypes={nodeTypes}
+        onNodesChange={onNodesChange}
+        onEdgesChange={onEdgesChange}
+        onNodeDoubleClick={onNodeDoubleClick}
+        onNodeDragStop={onNodeDragStop}
+        fitView
+      >
+        <Background variant={BackgroundVariant.Dots} gap={12} size={1} />
+        <AnimatePresence>
+          {loading.question && (
+            <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}>
+              <Panel position="top-center">
+                <div className="bg-blue-600 p-2 rounded text-white flex items-center gap-2">
+                  <Loader2 className="animate-spin" /> Generating question...
+                </div>
+              </Panel>
+            </motion.div>
+          )}
+          {loading.evidence && (
+            <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}>
+              <Panel position="top-center" style={{ marginTop: 4 }}>
+                <div className="bg-green-600 p-2 rounded text-white flex items-center gap-2">
+                  <BookOpen /> Finding evidence...
+                </div>
+              </Panel>
+            </motion.div>
+          )}
+          {loading.summary && (
+            <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}>
+              <Panel position="top-center" style={{ marginTop: 4 }}>
+                <div className="bg-purple-600 p-2 rounded text-white flex items-center gap-2">
+                  <RefreshCw className="animate-spin" /> Summarizing debate...
+                </div>
+              </Panel>
+            </motion.div>
+          )}
+        </AnimatePresence>
+        {aiSummary && (
+          <Panel position="bottom-left" style={{ maxWidth: '30vw', margin: 16, padding: 12, background: 'rgba(0,0,0,0.8)', borderRadius: 6 }}>
+            <h3 className="text-white mb-2">Debate Summary</h3>
+            <div className="text-white whitespace-pre-wrap max-h-60 overflow-auto">{aiSummary}</div>
+            <button onClick={() => setAiSummary(null)} className="mt-2 px-2 py-1 bg-gray-700 rounded text-white">
+              Close
+            </button>
           </Panel>
-  
-          <Panel position="top-right" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button onClick={() => fitView({ duration: 800 })} style={buttonStyle}>Fit to View</button>
-              <button onClick={onLayout} style={buttonStyle}>Tidy Up Layout</button>
-            </div>
-            <div style={{ padding: 12, background: 'rgba(28,28,32,0.9)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6, display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <input
-                type="text"
-                value={newNodeLabel}
-                onChange={(e) => setNewNodeLabel(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleCreateNode()}
-                placeholder="Enter your claim or question…"
-                style={{ padding: 8, borderRadius: 4, border: '1px solid rgba(255,255,255,0.2)', background: 'rgba(0,0,0,0.3)', color: 'white', outline: 'none' }}
-              />
-              <button onClick={handleCreateNode} style={buttonStyle}>Add Node</button>
-            </div>
-          </Panel>
-  
-          <Controls />
-          <MiniMap />
-        </ReactFlow>
-      </div>
-    );
-  }
-  
+        )}
+        <Panel position="top-right" className="flex flex-col gap-2">
+          <div className="flex items-center gap-2">
+            <button onClick={onLayout} className="px-3 py-1 border border-white rounded text-white flex items-center gap-1 hover:bg-gray-700">
+              <Edit2 /> Tighten Layout
+            </button>
+            <input
+              className="px-2 py-1 rounded bg-gray-800 text-white flex-1"
+              value={newNodeLabel}
+              placeholder="Enter node..."
+              onChange={(e) => setNewNodeLabel(e.target.value)}
+            />
+            <button onClick={handleCreateNode} disabled={!newNodeLabel.trim()} className="px-3 py-1 bg-blue-500 rounded text-white disabled:opacity-50 hover:bg-blue-600">
+              Add Node
+            </button>
+          </div>
+          <button onClick={onSummarize} disabled={loading.summary} className="mt-1 px-3 py-1 bg-purple-500 rounded text-white disabled:opacity-50 hover:bg-purple-600 flex items-center gap-1">
+            <RefreshCw className={loading.summary ? 'animate-spin' : ''} /> Summarize
+          </button>
+        </Panel>
+        <Controls />
+        <MiniMap nodeColor={(n) => `hsl(${240 - (n.data.depth ?? 0) * 30},80%,50%)`} />
+      </ReactFlow>
+    </div>
+  );
+}
