@@ -1,6 +1,7 @@
 /* ======================================================================
     File #1: client/components/CustomNode.tsx
-    This component is upgraded to accept a 'depth' and change its style.
+    This component is upgraded to accept a 'depth' property from its data
+    and change its style accordingly.
    ====================================================================== */
    import React, { memo } from 'react';
    import { Handle, Position, NodeProps } from 'reactflow';
@@ -13,18 +14,21 @@
      onFindEvidence?: (nodeId: string) => void; 
    };
    
-   // Define a color palette for different node depths
+   // --- NEW COLOR PALETTE ---
+   // A cool-toned palette that will loop for deep conversations.
    const depthColors = [
-     'rgba(28, 28, 32, 0.8)',   // Base color for depth 0
-     'rgba(55, 48, 163, 0.7)',  // Deep indigo for depth 1
-     'rgba(107, 33, 168, 0.7)', // Rich purple for depth 2
-     'rgba(134, 25, 143, 0.7)'  // Magenta for depth 3+
+     'rgba(49, 46, 129, 0.7)',  // Deep Indigo for depth 0 (Root)
+     'rgba(55, 48, 163, 0.7)',  // Indigo for depth 1
+     'rgba(79, 70, 229, 0.7)',  // Brighter Indigo for depth 2
+     'rgba(34, 197, 94, 0.7)',  // Special: Green for Evidence nodes
    ];
    
+   const aiColor = 'rgba(217, 119, 6, 0.7)'; // Amber for AI Questions
+   
    const CustomNode = ({ id, data }: NodeProps<NodeData>) => {
-     const isAINode = data.label?.startsWith('AI Question:');
      const isEvidenceNode = data.type === 'evidence';
-     
+     const isAINode = data.type === 'ai_question'; // We'll make this more explicit
+   
      const baseStyle: React.CSSProperties = {
        padding: '15px 20px',
        borderRadius: '12px',
@@ -40,19 +44,21 @@
      };
      
      const getStyle = () => {
-       // Start with the base style
        let style = { ...baseStyle };
    
-       // Determine background color based on depth
+       // Determine background color based on type or depth
        const depth = data.depth ?? 0;
-       style.backgroundColor = depthColors[depth % depthColors.length];
    
-       // Override border for specific types
        if (isEvidenceNode) {
-         style.border = '1px solid rgba(34, 197, 94, 0.6)';
+           style.backgroundColor = depthColors[3];
+           style.border = '1px solid rgba(34, 197, 94, 0.6)';
        } else if (isAINode) {
-         style.border = '1px solid rgba(250, 204, 21, 0.6)';
+           style.backgroundColor = aiColor;
+           style.border = '1px solid rgba(250, 204, 21, 0.6)';
+       } else {
+           style.backgroundColor = depthColors[depth % 3]; // Loop through first 3 colors
        }
+       
        return style;
      };
    
@@ -69,6 +75,7 @@
            </a>
          )}
    
+         {/* A claim is neither AI nor Evidence, so the button will show */}
          {!isAINode && !isEvidenceNode && (
              <button onClick={() => data.onFindEvidence?.(id)} style={buttonStyle}>
                Find Evidence
@@ -80,3 +87,5 @@
    };
    
    export default memo(CustomNode);
+   
+   
