@@ -55,7 +55,7 @@ JSON EVIDENCE OBJECT:
 """
 
 # --- AI & TOOL SETUP ---
-model = genai.GenerativeModel('gemini-1.5-flash-latest')
+model = genai.GenerativeModel('gemini-2.5-flash')
 
 def perform_google_search(query: str):
     params = {'key': SEARCH_API_KEY, 'cx': SEARCH_ENGINE_ID, 'q': query}

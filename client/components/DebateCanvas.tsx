@@ -27,11 +27,7 @@ import io, { Socket } from 'socket.io-client';
 import 'reactflow/dist/style.css';
 import { getLayoutedElements } from '../utils/layout';
 
-// --- THIS IS THE FIX ---
-// By defining nodeTypes outside the component function, it is only created once
-// when the module is loaded, which permanently fixes the React Flow warning.
 const nodeTypes = { custom: CustomNode };
-
 type FlowNode = Node<{ label?: string; [key: string]: any }>;
 
 export default function DebateCanvas() {
@@ -42,39 +38,30 @@ export default function DebateCanvas() {
   const socketRef = useRef<Socket | null>(null);
   const { fitView } = useReactFlow();
 
-  // All your handlers and hooks below this line are correct.
-  
-  const onNodesChange: OnNodesChange = useCallback(
-    (changes) => {
-      for (const change of changes) {
-        if (change.type === 'remove') {
-          socketRef.current?.emit('deleteNode', change.id);
-        }
+  // --- Handlers for user interaction ---
+  const onNodesChange: OnNodesChange = useCallback((changes) => {
+    for (const change of changes) {
+      if (change.type === 'remove') {
+        socketRef.current?.emit('deleteNode', change.id);
       }
-      setNodes((nds) => applyNodeChanges(changes, nds));
-    },
-    [] 
-  );
+    }
+    setNodes((nds) => applyNodeChanges(changes, nds));
+  }, []);
 
-  const onEdgesChange = useCallback(
-    (changes: EdgeChange[]) => setEdges((eds) => applyEdgeChanges(changes, eds)),
-    []
-  );
+  const onEdgesChange = useCallback((changes: EdgeChange[]) => setEdges((eds) => applyEdgeChanges(changes, eds)), []);
+  
   const onNodeDoubleClick: NodeDragHandler = useCallback((_, node) => {
     socketRef.current?.emit('requestAiQuestion', node);
   }, []);
+  
   const onNodeDragStop: NodeDragHandler = useCallback((_, node) => {
     socketRef.current?.emit('nodeUpdated', { id: node.id, position: node.position });
   }, []);
+  
   const handleCreateNode = () => {
     if (!newNodeLabel.trim()) return;
     const id = crypto.randomUUID();
-    const newNode: FlowNode = {
-      id,
-      data: { label: newNodeLabel },
-      type: 'custom',
-      position: { x: 150, y: 150 },
-    };
+    const newNode: FlowNode = { id, data: { label: newNodeLabel }, type: 'custom', position: { x: 150, y: 150 } };
     setNodes((cur) => [...cur, newNode]);
     socketRef.current?.emit('createNode', newNode);
     setNewNodeLabel('');
@@ -84,11 +71,7 @@ export default function DebateCanvas() {
     if (nodes.length === 0) return;
     const { nodes: ln, edges: le } = getLayoutedElements(nodes, edges);
     const validNodes = ln.filter(
-      (n) =>
-        typeof n.position?.x === 'number' &&
-        !isNaN(n.position.x) &&
-        typeof n.position?.y === 'number' &&
-        !isNaN(n.position.y)
+      (n) => typeof n.position?.x === 'number' && !isNaN(n.position.x) && typeof n.position?.y === 'number' && !isNaN(n.position.y)
     );
     setNodes(validNodes);
     setEdges(le);
@@ -98,11 +81,11 @@ export default function DebateCanvas() {
   const handleFindEvidence = useCallback((nodeId: string) => {
     const nodeToSearch = nodes.find(n => n.id === nodeId);
     if (nodeToSearch) {
-      console.log(`Requesting evidence for node: ${nodeId}`);
       socketRef.current?.emit('requestEvidence', nodeToSearch);
     }
   }, [nodes]);
 
+  // --- Main useEffect for socket.io listeners ---
   useEffect(() => {
     const socket = io('http://localhost:3001');
     socketRef.current = socket;
@@ -110,9 +93,7 @@ export default function DebateCanvas() {
     const handleAiNodeCreated = ({ aiNode, edge }: { aiNode: FlowNode, edge: Edge }) => {
       const typedNode = { ...aiNode, type: 'custom' };
       setNodes((prev) => [...prev, typedNode]);
-      if (edge) {
-        setEdges((prev) => addEdge(edge, prev));
-      }
+      if (edge) setEdges((prev) => addEdge(edge, prev));
     };
     const handleNewNodeFromServer = (node: FlowNode) => {
       setNodes((cur) => cur.some((n) => n.id === node.id) ? cur : [...cur, { ...node, type: 'custom' }]);
@@ -124,12 +105,10 @@ export default function DebateCanvas() {
     const handleEvidenceNodesCreated = ({ evidenceNodes, edges: newEdges }: { evidenceNodes: FlowNode[], edges: Edge[] }) => {
       const typedEvidenceNodes = evidenceNodes.map((node) => ({ ...node, type: 'custom' }));
       setNodes((prev) => [...prev, ...typedEvidenceNodes]);
-      if (Array.isArray(newEdges)) {
-        setEdges((prev) => prev.concat(newEdges));
-      }
+      if (Array.isArray(newEdges)) setEdges((prev) => prev.concat(newEdges));
     };
     const handleNodeUpdateFromServer = (update: {id: string, position: {x: number, y: number}}) => {
-        setNodes((nds) => nds.map(n => n.id === update.id ? {...n, position: update.position} : n));
+      setNodes((nds) => nds.map(n => n.id === update.id ? {...n, position: update.position} : n));
     };
     const handleAiError = (msg: string) => {
       setAiError(msg);
@@ -154,6 +133,7 @@ export default function DebateCanvas() {
     };
   }, []);
 
+  // --- useEffect for loading initial data ---
   useEffect(() => {
     (async () => {
       try {
@@ -174,23 +154,56 @@ export default function DebateCanvas() {
     })();
   }, []);
 
-  const buttonStyle: React.CSSProperties = {
-    padding: '8px 12px',
-    background: 'rgba(28,28,32,0.9)',
-    color: 'white',
-    border: '1px solid rgba(255,255,255,0.1)',
-    borderRadius: 6,
-    cursor: 'pointer',
-  };
+  // --- THIS IS THE FIX: All memoized calculations are now together ---
 
+  // 1. Calculate the depth of each node first. This is the source of truth for coloring.
+  const nodesWithDepth = useMemo(() => {
+    if (nodes.length === 0) return [];
+    const nodeDepths = new Map<string, number>();
+    const edgesBySource = new Map<string, string[]>();
+    nodes.forEach(n => edgesBySource.set(n.id, []));
+    edges.forEach(e => {
+        if(edgesBySource.has(e.source)) {
+            edgesBySource.get(e.source)!.push(e.target);
+        }
+    });
+
+    const targets = new Set(edges.map(e => e.target));
+    const rootNodes = nodes.filter(n => !targets.has(n.id));
+    
+    const queue: [string, number][] = rootNodes.map(n => [n.id, 0]);
+    const visited = new Set(rootNodes.map(n => n.id));
+
+    while (queue.length > 0) {
+      const [nodeId, depth] = queue.shift()!;
+      nodeDepths.set(nodeId, depth);
+      const children = edgesBySource.get(nodeId) || [];
+      for (const childId of children) {
+        if (!visited.has(childId)) {
+          visited.add(childId);
+          queue.push([childId, depth + 1]);
+        }
+      }
+    }
+    return nodes.map(n => ({...n, data: { ...n.data, depth: nodeDepths.get(n.id) ?? 0 }}));
+  }, [nodes, edges]);
+
+  // 2. Now inject the `onFindEvidence` handler into the nodes that have their depth calculated.
   const nodesWithHandlers = useMemo(() => {
-    return nodes.map((n) => ({ ...n, data: { ...n.data, onFindEvidence: handleFindEvidence } }));
-  }, [nodes, handleFindEvidence]);
+    return nodesWithDepth.map((n) => ({ ...n, data: { ...n.data, onFindEvidence: handleFindEvidence } }));
+  }, [nodesWithDepth, handleFindEvidence]);
 
+  // 3. Finally, sanitize the edges based on the final list of nodes.
   const sanitizedEdges = useMemo(() => {
     const validIds = new Set(nodesWithHandlers.map((n) => n.id));
     return edges.filter((e) => validIds.has(e.source) && validIds.has(e.target));
   }, [edges, nodesWithHandlers]);
+  
+  // --- styles ---
+  const buttonStyle: React.CSSProperties = {
+    padding: '8px 12px', background: 'rgba(28,28,32,0.9)', color: 'white',
+    border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6, cursor: 'pointer',
+  };
 
   return (
     <div style={{ width: '100vw', height: '100vh' }}>
@@ -214,38 +227,19 @@ export default function DebateCanvas() {
 
         <Panel position="top-right" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div style={{ display: 'flex', gap: 8 }}>
-            <button onClick={() => fitView({ duration: 800 })} style={buttonStyle}>
-              Fit to View
-            </button>
-            <button onClick={onLayout} style={buttonStyle}>
-              Tidy Up Layout
-            </button>
+            <button onClick={() => fitView({ duration: 800 })} style={buttonStyle}>Fit to View</button>
+            <button onClick={onLayout} style={buttonStyle}>Tidy Up Layout</button>
           </div>
-          <div
-            style={{
-              padding: 12,
-              background: 'rgba(28,28,32,0.9)',
-              border: '1px solid rgba(255,255,255,0.1)',
-              borderRadius: 6,
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 8,
-            }}
-          >
+          <div style={{ padding: 12, background: 'rgba(28,28,32,0.9)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6, display: 'flex', flexDirection: 'column', gap: 8 }}>
             <input
               type="text"
               value={newNodeLabel}
               onChange={(e) => setNewNodeLabel(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleCreateNode()}
               placeholder="Enter your claim or question…"
-              style={{
-                padding: 8, borderRadius: 4, border: '1px solid rgba(255,255,255,0.2)',
-                background: 'rgba(0,0,0,0.3)', color: 'white', outline: 'none',
-              }}
+              style={{ padding: 8, borderRadius: 4, border: '1px solid rgba(255,255,255,0.2)', background: 'rgba(0,0,0,0.3)', color: 'white', outline: 'none' }}
             />
-            <button onClick={handleCreateNode} style={buttonStyle}>
-              Add Node
-            </button>
+            <button onClick={handleCreateNode} style={buttonStyle}>Add Node</button>
           </div>
         </Panel>
 
