@@ -18,6 +18,7 @@ import ReactFlow, {
   Background,
   useReactFlow,
   Node,
+  NodeMouseHandler,
   NodeDragHandler,
   OnNodesChange,
   applyNodeChanges,
@@ -83,7 +84,7 @@ export default function DebateCanvas({ canvasId }: { canvasId: string }) {
     [],
   );
 
-  const onNodeDoubleClick: NodeDragHandler = useCallback(
+  const onNodeDoubleClick: NodeMouseHandler = useCallback(
     (_, node) => {
       if (loading.question) return;
       setLoading((l) => ({ ...l, question: true }));
