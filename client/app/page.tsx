@@ -7,7 +7,7 @@ import { Auth } from '@supabase/auth-ui-react';
 import { ThemeSupa } from '@supabase/auth-ui-shared';
 import VantaBackground from '../components/VantaBackground';
 
-// Dynamically import the Lobby component to ensure it's a client component.
+// Dynamically import the Lobby component. This is the correct pattern.
 const ClientLobby = dynamic(() => import('../components/Lobby'), {
   ssr: false,
   loading: () => (
@@ -25,7 +25,7 @@ export default function Home() {
     <main className="relative w-screen h-screen">
       <VantaBackground />
       {!session ? (
-        // The Login UI for logged-out users
+        // The Login UI
         <div className="w-screen h-screen flex items-center justify-center">
           <div className="w-[400px] bg-black/40 backdrop-blur-lg p-8 rounded-xl border border-gray-700 shadow-2xl">
             <h1 className="text-white text-center text-3xl font-bold mb-8">
@@ -40,7 +40,7 @@ export default function Home() {
           </div>
         </div>
       ) : (
-        // The new "Awestruck" Lobby for logged-in users
+        // The "Awestruck" Lobby
         <ClientLobby />
       )}
     </main>
