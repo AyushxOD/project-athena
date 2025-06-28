@@ -2,6 +2,7 @@
 // This is the complete, final, and correct version with all handlers sending the canvasId.
 
 'use client';
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
 import React, {
   useEffect,
@@ -146,8 +147,8 @@ export default function DebateCanvas({ canvasId }: { canvasId: string }) {
     (async () => {
       try {
         const [nr, er] = await Promise.all([
-          fetch(`http://localhost:3001/canvas/${canvasId}/nodes`),
-          fetch(`http://localhost:3001/canvas/${canvasId}/edges`),
+          fetch(`${API_URL}/canvas/${canvasId}/nodes`),
+          fetch(`${API_URL}/canvas/${canvasId}/edges`),
         ]);
         const initNodes: FlowNode[] = await nr.json();
         const initEdges: Edge[] = await er.json();
@@ -162,7 +163,7 @@ export default function DebateCanvas({ canvasId }: { canvasId: string }) {
   // --- Socket.io setup ---
   useEffect(() => {
     if (!canvasId) return;
-    const socket = io('http://localhost:3001');
+    const socket = io(API_URL);
     socketRef.current = socket;
     socket.emit('joinCanvas', canvasId);
 

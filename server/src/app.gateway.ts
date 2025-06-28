@@ -115,10 +115,10 @@ export class AppGateway implements OnGatewayConnection, OnGatewayDisconnect {
       const claimText = node.data.label;
       if (!claimText) return;
 
-      const aiResp = await firstValueFrom(
-        this.httpService.post(
-          'http://127.0.0.1:8000/generate-question',
-          { text: claimText },
+     // And change it to this:
+const aiServiceUrl = process.env.AI_SERVICE_URL || 'http://127.0.0.1:8000';
+const aiResp = await firstValueFrom(
+    this.httpService.post(`${aiServiceUrl}/generate-question`,
           { timeout: 15000 },
         ),
       );
@@ -164,10 +164,10 @@ export class AppGateway implements OnGatewayConnection, OnGatewayDisconnect {
       const { node, canvasId } = payload;
       const claimText = node.data.label;
       if (!claimText) return;
-
-      const aiResp = await firstValueFrom(
-        this.httpService.post(
-          'http://127.0.0.1:8000/find-evidence',
+      // And change it to this:
+const aiServiceUrl = process.env.AI_SERVICE_URL || 'http://127.0.0.1:8000';
+const aiResp = await firstValueFrom(
+    this.httpService.post(`${aiServiceUrl}/generate-question`,
           { text: claimText },
           { timeout: 30000 },
         ),
