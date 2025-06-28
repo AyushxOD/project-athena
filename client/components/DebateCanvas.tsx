@@ -1,13 +1,20 @@
 // Location: client/components/DebateCanvas.tsx
 'use client';
 
-import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
+import React, {
+  useEffect,
+  useState,
+  useRef,
+  useCallback,
+  useMemo,
+} from 'react';
 import ReactFlow, {
   MiniMap,
   Controls,
-  Background,
-  BackgroundVariant,
+  Background,         // <-- ADD THIS BACK
+  // <-- MAKE SURE THIS IS HERE TOO
   Panel,
+  useReactFlow,
   Node,
   NodeDragHandler,
   OnNodesChange,
@@ -16,7 +23,7 @@ import ReactFlow, {
   Edge,
   EdgeChange,
   addEdge,
-  useReactFlow,
+  BackgroundVariant,
 } from 'reactflow';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Loader2, RefreshCw, Edit2, BookOpen } from 'lucide-react';
@@ -25,68 +32,124 @@ import io, { Socket } from 'socket.io-client';
 import 'reactflow/dist/style.css';
 import { getLayoutedElements } from '../utils/layout';
 
-// Type for nodes
-type FlowNode = Node<{ label?: string; [key: string]: any }>;
+// register custom node renderer
 const nodeTypes = { custom: CustomNode };
 
-export default function DebateCanvas() {
+type FlowNode = Node<{ label?: string; [key: string]: any }>;
+
+export default function DebateCanvas({ canvasId }: { canvasId: string }) {
   // State
   const [nodes, setNodes] = useState<FlowNode[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
   const [aiError, setAiError] = useState<string | null>(null);
   const [newNodeLabel, setNewNodeLabel] = useState('');
   const [aiSummary, setAiSummary] = useState<string | null>(null);
-  const [loading, setLoading] = useState({ summary: false, question: false, evidence: false });
+  const [loading, setLoading] = useState({
+    summary: false,
+    question: false,
+    evidence: false,
+  });
 
   // React Flow instance
   const { fitView } = useReactFlow();
   const socketRef = useRef<Socket | null>(null);
 
-  // Node / edge change handlers
+  // --- handlers ---
   const onNodesChange: OnNodesChange = useCallback(
-    (changes) => setNodes((nds) => applyNodeChanges(changes, nds)),
-    []
-  );
-  const onEdgesChange = useCallback(
-    (changes: EdgeChange[]) => setEdges((eds) => applyEdgeChanges(changes, eds)),
-    []
+    (changes) => {
+      for (const change of changes) {
+        if (change.type === 'remove') {
+          socketRef.current?.emit('deleteNode', { nodeId: change.id, canvasId });
+        }
+      }
+      setNodes((nds) => applyNodeChanges(changes, nds));
+    },
+    [canvasId],
   );
 
-  // Double-click for AI question
+  const onEdgesChange = useCallback(
+    (changes: EdgeChange[]) => setEdges((eds) => applyEdgeChanges(changes, eds)),
+    [],
+  );
+
   const onNodeDoubleClick: NodeDragHandler = useCallback(
     (_, node) => {
       if (loading.question) return;
       setLoading((l) => ({ ...l, question: true }));
-      socketRef.current?.emit('requestAiQuestion', node);
+      socketRef.current?.emit('requestAiQuestion', { node, canvasId });
     },
-    [loading.question]
+    [loading.question, canvasId],
   );
 
-  // Drag stop persists position
   const onNodeDragStop: NodeDragHandler = useCallback(
     (_, node) => {
-      socketRef.current?.emit('nodeUpdated', { id: node.id, position: node.position });
+      socketRef.current?.emit('nodeUpdated', {
+        id: node.id,
+        position: node.position,
+        canvasId,
+      });
     },
-    []
+    [canvasId],
   );
 
-  // Create new node
   const handleCreateNode = useCallback(() => {
     if (!newNodeLabel.trim()) return;
     const id = crypto.randomUUID();
-    const newNode: FlowNode = { id, data: { label: newNodeLabel }, type: 'custom', position: { x: 150, y: 150 } };
-    setNodes((cur) => [...cur, newNode]);
-    socketRef.current?.emit('createNode', newNode);
-    setNewNodeLabel('');
-  }, [newNodeLabel]);
+    const newNode: FlowNode = {
+      id,
+      data: { label: newNodeLabel },
+      type: 'custom',
+      position: { x: 150, y: 150 },
+    };
 
-  // Load initial graph from server
+    setNodes((cur) => [...cur, newNode]);
+    socketRef.current?.emit('createNode', { node: newNode, canvasId });
+    setNewNodeLabel('');
+  }, [newNodeLabel, canvasId]);
+
+  const onLayout = useCallback(() => {
+    if (nodes.length === 0) return;
+    const { nodes: ln, edges: le } = getLayoutedElements(nodes, edges);
+    const validNodes = ln.filter(
+      (n) =>
+        typeof n.position?.x === 'number' &&
+        !isNaN(n.position.x) &&
+        typeof n.position?.y === 'number' &&
+        !isNaN(n.position.y),
+    );
+    setNodes(validNodes);
+    setEdges(le);
+    setTimeout(() => fitView({ duration: 800 }), 20);
+  }, [nodes, edges, fitView]);
+
+  // --- handlers that now include canvasId ---
+  const handleFindEvidence = useCallback(
+    (nodeId: string) => {
+      if (loading.evidence) return;
+      setLoading((l) => ({ ...l, evidence: true }));
+      const node = nodes.find((n) => n.id === nodeId);
+      if (node) socketRef.current?.emit('requestEvidence', { node, canvasId });
+    },
+    [nodes, loading.evidence, canvasId],
+  );
+
+  const onSummarize = useCallback(() => {
+    setLoading((l) => ({ ...l, summary: true }));
+    setAiError(null);
+    socketRef.current?.emit('requestSummary', {
+      nodes: nodes.map((n) => ({ id: n.id, label: n.data.label })),
+      edges: edges.map((e) => ({ source: e.source, target: e.target })),
+    });
+  }, [nodes, edges]);
+
+  // --- Load initial graph data for the specific canvas ---
   useEffect(() => {
+    if (!canvasId) return; // Don't fetch if there's no ID
     (async () => {
       try {
         const [nr, er] = await Promise.all([
-          fetch('http://localhost:3001/nodes'),
-          fetch('http://localhost:3001/edges'),
+          fetch(`http://localhost:3001/canvas/${canvasId}/nodes`),
+          fetch(`http://localhost:3001/canvas/${canvasId}/edges`),
         ]);
         const initNodes: FlowNode[] = await nr.json();
         const initEdges: Edge[] = await er.json();
@@ -96,45 +159,67 @@ export default function DebateCanvas() {
         console.error('Error loading graph data:', e);
       }
     })();
-  }, []);
+  }, [canvasId]); // This now depends on canvasId
 
-  // Socket.io setup
+  // --- Socket.io setup, now joining a specific room ---
   useEffect(() => {
+    if (!canvasId) return; // Don't connect if there's no ID
     const socket = io('http://localhost:3001');
     socketRef.current = socket;
 
-    socket.on('newNodeFromServer', (node: FlowNode) => {
-      setNodes((cur) => (cur.some((n) => n.id === node.id) ? cur : [...cur, { ...node, type: 'custom' }]));
-    });
-    socket.on('nodeDeleted', (nodeId: string) => {
+    // Join the specific room for this canvas
+    socket.emit('joinCanvas', canvasId);
+
+    const handleNewNodeFromServer = (node: FlowNode) => {
+      setNodes((cur) =>
+        cur.some((n) => n.id === node.id)
+          ? cur
+          : [...cur, { ...node, type: 'custom' }],
+      );
+    };
+    const handleNodeDeleted = (nodeId: string) => {
       setNodes((cur) => cur.filter((n) => n.id !== nodeId));
-      setEdges((cur) => cur.filter((e) => e.source !== nodeId && e.target !== nodeId));
-    });
-    socket.on('nodeUpdateFromServer', ({ id, position }) => {
+      setEdges((cur) =>
+        cur.filter((e) => e.source !== nodeId && e.target !== nodeId),
+      );
+    };
+    const handleNodeUpdateFromServer = ({ id, position }) => {
       setNodes((cur) => cur.map((n) => (n.id === id ? { ...n, position } : n)));
-    });
-    socket.on('aiNodeCreated', ({ aiNode, edge }: { aiNode: FlowNode; edge: Edge }) => {
+    };
+    const handleAiNodeCreated = ({ aiNode, edge }: { aiNode: FlowNode; edge: Edge }) => {
       setLoading((l) => ({ ...l, question: false }));
       setNodes((cur) => [...cur, { ...aiNode, type: 'custom' }]);
       setEdges((cur) => addEdge(edge, cur));
-    });
-    socket.on('evidenceNodesCreated', ({ evidenceNodes, edges: newEdges }: { evidenceNodes: FlowNode[]; edges: Edge[] }) => {
+    };
+    const handleEvidenceNodesCreated = ({ evidenceNodes, edges: newEdges }: { evidenceNodes: FlowNode[]; edges: Edge[] }) => {
       setLoading((l) => ({ ...l, evidence: false }));
       setNodes((cur) => [...cur, ...evidenceNodes.map((n) => ({ ...n, type: 'custom' }))]);
-      setEdges((cur) => [...cur, ...newEdges]);
-    });
-    socket.on('aiSummaryCreated', (summary: string) => {
+      setEdges((cur) => cur.concat(newEdges));
+    };
+    const handleSummaryCreated = (summary: string) => {
       setLoading((l) => ({ ...l, summary: false }));
       setAiSummary(summary);
-    });
-    socket.on('aiError', (msg: string) => {
+    };
+    const handleAiError = (msg: string) => {
       setAiError(msg);
       setLoading({ summary: false, question: false, evidence: false });
       setTimeout(() => setAiError(null), 3000);
-    });
+    };
 
-    return () => socket.disconnect();
-  }, []);
+    socket.on('newNodeFromServer', handleNewNodeFromServer);
+    socket.on('nodeDeleted', handleNodeDeleted);
+    socket.on('nodeUpdateFromServer', handleNodeUpdateFromServer);
+    socket.on('aiNodeCreated', handleAiNodeCreated);
+    socket.on('evidenceNodesCreated', handleEvidenceNodesCreated);
+    socket.on('aiSummaryCreated', handleSummaryCreated);
+    socket.on('aiError', handleAiError);
+
+    // Leave the room when the component unmounts
+    return () => {
+      socket.emit('leaveCanvas', canvasId);
+      socket.disconnect();
+    };
+  }, [canvasId]); // This effect now depends on canvasId
 
   // Sanitize nodes (no NaN positions)
   const sanitizedNodes = useMemo(
@@ -162,16 +247,7 @@ export default function DebateCanvas() {
     return sanitizedNodes.map((n) => ({ ...n, data: { ...n.data, depth: depthMap.get(n.id) ?? 0 } }));
   }, [sanitizedNodes, edges]);
 
-  // Attach evidence handler to nodes
-  const handleFindEvidence = useCallback(
-    (nodeId: string) => {
-      if (loading.evidence) return;
-      setLoading((l) => ({ ...l, evidence: true }));
-      const node = nodes.find((n) => n.id === nodeId);
-      if (node) socketRef.current?.emit('requestEvidence', node);
-    },
-    [nodes, loading.evidence]
-  );
+ 
 
   const nodesWithHandlers = useMemo(
     () => nodesWithDepth.map((n) => ({ ...n, data: { ...n.data, onFindEvidence: handleFindEvidence } })),
@@ -186,24 +262,8 @@ export default function DebateCanvas() {
     [edges, nodesWithHandlers]
   );
 
-  // Layout function
-  const onLayout = useCallback(() => {
-    if (nodesWithHandlers.length === 0) return;
-    const { nodes: ln, edges: le } = getLayoutedElements(nodesWithHandlers, sanitizedEdges);
-    setNodes(ln);
-    setEdges(le);
-    setTimeout(() => fitView({ duration: 800 }), 20);
-  }, [nodesWithHandlers, sanitizedEdges, fitView]);
 
-  // Summarize debate
-  const onSummarize = useCallback(() => {
-    setLoading((l) => ({ ...l, summary: true }));
-    setAiError(null);
-    socketRef.current?.emit('requestSummary', {
-      nodes: nodes.map((n) => ({ id: n.id, label: n.data.label })),
-      edges: edges.map((e) => ({ source: e.source, target: e.target })),
-    });
-  }, [nodes, edges]);
+
 
   return (
     <div className="w-screen h-screen bg-gray-900">

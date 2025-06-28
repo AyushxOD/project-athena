@@ -1,4 +1,4 @@
-// server/src/app.gateway.ts
+// Location: server/src/app.gateway.ts
 
 import {
   SubscribeMessage,
@@ -6,14 +6,17 @@ import {
   WebSocketServer,
   MessageBody,
   ConnectedSocket,
+  OnGatewayConnection,
+  OnGatewayDisconnect,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
-import { AppService, Node, Edge } from './app.service';
+import { Node, Edge } from './types';
+import { AppService } from './app.service'; 
 
 @WebSocketGateway({ cors: true })
-export class AppGateway {
+export class AppGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
   server: Server;
 
@@ -22,54 +25,102 @@ export class AppGateway {
     private readonly appService: AppService,
   ) {}
 
-  // ————— Create a brand–new node —————
+  // --- NEW: Handle client connections and disconnections ---
+  handleConnection(client: Socket, ...args: any[]) {
+    console.log(`Client Connected: ${client.id}`);
+  }
+
+  handleDisconnect(client: Socket) {
+    console.log(`Client Disconnected: ${client.id}`);
+  }
+
+  // --- NEW: Handlers for joining and leaving canvas rooms ---
+  @SubscribeMessage('joinCanvas')
+  handleJoinCanvas(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() canvasId: string,
+  ): void {
+    if (canvasId) {
+      client.join(canvasId);
+      console.log(`Client ${client.id} joined room: ${canvasId}`);
+    }
+  }
+
+  @SubscribeMessage('leaveCanvas')
+  handleLeaveCanvas(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() canvasId: string,
+  ): void {
+    if (canvasId) {
+      client.leave(canvasId);
+      console.log(`Client ${client.id} left room: ${canvasId}`);
+    }
+  }
+
+  // --- All handlers below are MODIFIED to be "room-aware" ---
+
   @SubscribeMessage('createNode')
   async handleCreateNode(
     @ConnectedSocket() client: Socket,
-    @MessageBody() payload: Node
+    @MessageBody() payload: { node: Node; canvasId: string },
   ): Promise<void> {
-    const savedNode = await this.appService.createNode(payload);
-    // emit to everyone (including creator)
-    this.server.emit('newNodeFromServer', savedNode);
+    try {
+      const { node, canvasId } = payload;
+      const savedNode = await this.appService.createNode(node, canvasId);
+      // Broadcast to other clients in the same room
+      client.to(canvasId).emit('newNodeFromServer', savedNode);
+    } catch (err) {
+      console.error('Error creating node:', err.message);
+    }
   }
 
-  // ————— Persist position updates —————
   @SubscribeMessage('nodeUpdated')
   async handleNodeUpdate(
     @ConnectedSocket() client: Socket,
-    @MessageBody() payload: { id: string; position: { x: number; y: number } }
+    @MessageBody()
+    payload: { id: string; position: { x: number; y: number }; canvasId: string },
   ): Promise<void> {
-    await this.appService.updateNodePosition(payload.id, payload.position);
-    // broadcast to others
-    client.broadcast.emit('nodeUpdateFromServer', payload);
+    try {
+      const { id, position, canvasId } = payload;
+      await this.appService.updateNodePosition(id, position);
+      // Broadcast to others in the same room
+      client.to(canvasId).emit('nodeUpdateFromServer', { id, position });
+    } catch (err) {
+      console.error('Error updating node:', err.message);
+    }
   }
 
-  // ————— Delete a node (and its edges via FK cascade) —————
   @SubscribeMessage('deleteNode')
   async handleDeleteNode(
     @ConnectedSocket() client: Socket,
-    @MessageBody() nodeId: string
+    @MessageBody() payload: { nodeId: string; canvasId: string },
   ): Promise<void> {
-    await this.appService.deleteNode(nodeId);
-    this.server.emit('nodeDeleted', nodeId);
+    try {
+      const { nodeId, canvasId } = payload;
+      await this.appService.deleteNode(nodeId);
+      // Broadcast to everyone in the room (including sender, to confirm deletion)
+      this.server.to(canvasId).emit('nodeDeleted', nodeId);
+    } catch (err) {
+      console.error('Error deleting node:', err.message);
+    }
   }
 
-  // ————— AI: generate a probing question —————
   @SubscribeMessage('requestAiQuestion')
   async handleRequestAiQuestion(
     @ConnectedSocket() client: Socket,
-    @MessageBody() payload: Node
+    @MessageBody() payload: { node: Node; canvasId: string },
   ): Promise<void> {
     try {
-      const claimText = payload.data.label;
+      const { node, canvasId } = payload;
+      const claimText = node.data.label;
       if (!claimText) return;
 
       const aiResp = await firstValueFrom(
         this.httpService.post(
           'http://127.0.0.1:8000/generate-question',
           { text: claimText },
-          { timeout: 15000 }
-        )
+          { timeout: 15000 },
+        ),
       );
       const aiQuestion = aiResp.data?.question;
       if (!aiQuestion) {
@@ -77,25 +128,24 @@ export class AppGateway {
         return;
       }
 
-      // 1) Persist new AI-question node
       const aiNodeData: Node = {
         id: crypto.randomUUID(),
-        position: { x: payload.position.x, y: payload.position.y + 250 },
+        position: { x: node.position.x, y: node.position.y + 250 },
         data: { label: `AI Question: ${aiQuestion}`, type: 'ai_question' },
       };
-      const savedAiNode = await this.appService.createNode(aiNodeData);
+      const savedAiNode = await this.appService.createNode(aiNodeData, canvasId);
 
-      // 2) Persist linking edge
-      const edgeId = `edge-${payload.id}-${savedAiNode.id}`;
-      const savedEdge = await this.appService.createEdge({
-        id: edgeId,
-        source: payload.id,
-        target: savedAiNode.id,
-        animated: true,
-      });
+      const savedEdge = await this.appService.createEdge(
+        {
+          id: `edge-${node.id}-${savedAiNode.id}`,
+          source: node.id,
+          target: savedAiNode.id,
+          animated: true,
+        },
+        canvasId,
+      );
 
-      // 3) Emit both node + edge
-      this.server.emit('aiNodeCreated', {
+      this.server.to(canvasId).emit('aiNodeCreated', {
         aiNode: savedAiNode,
         edge: savedEdge,
       });
@@ -105,22 +155,22 @@ export class AppGateway {
     }
   }
 
-  // ————— AI: fetch and create evidence nodes —————
   @SubscribeMessage('requestEvidence')
   async handleRequestEvidence(
     @ConnectedSocket() client: Socket,
-    @MessageBody() payload: Node
+    @MessageBody() payload: { node: Node; canvasId: string },
   ): Promise<void> {
     try {
-      const claimText = payload.data.label;
+      const { node, canvasId } = payload;
+      const claimText = node.data.label;
       if (!claimText) return;
 
       const aiResp = await firstValueFrom(
         this.httpService.post(
           'http://127.0.0.1:8000/find-evidence',
           { text: claimText },
-          { timeout: 30000 }
-        )
+          { timeout: 30000 },
+        ),
       );
       const evidenceList = aiResp.data?.evidence;
       if (!Array.isArray(evidenceList) || evidenceList.length === 0) {
@@ -134,23 +184,25 @@ export class AppGateway {
       for (const item of evidenceList) {
         const n: Node = {
           id: crypto.randomUUID(),
-          position: { x: payload.position.x, y: payload.position.y + 250 },
+          position: { x: node.position.x, y: node.position.y + 250 },
           data: { label: item.summary, url: item.url, type: 'evidence' },
         };
-        const savedNode = await this.appService.createNode(n);
+        const savedNode = await this.appService.createNode(n, canvasId);
         createdNodes.push(savedNode);
 
-        const edgeId = `edge-${payload.id}-${savedNode.id}`;
-        const savedEdge = await this.appService.createEdge({
-          id: edgeId,
-          source: payload.id,
-          target: savedNode.id,
-          animated: true,
-        });
+        const savedEdge = await this.appService.createEdge(
+          {
+            id: `edge-${node.id}-${savedNode.id}`,
+            source: node.id,
+            target: savedNode.id,
+            animated: true,
+          },
+          canvasId,
+        );
         createdEdges.push(savedEdge);
       }
 
-      this.server.emit('evidenceNodesCreated', {
+      this.server.to(canvasId).emit('evidenceNodesCreated', {
         evidenceNodes: createdNodes,
         edges: createdEdges,
       });
@@ -160,21 +212,25 @@ export class AppGateway {
     }
   }
 
-  // ————— AI: summarize the entire debate graph —————
   @SubscribeMessage('requestSummary')
   async handleRequestSummary(
     @ConnectedSocket() client: Socket,
     @MessageBody()
-    payload: { nodes: { id: string; label: string }[]; edges: { source: string; target: string }[] }
+    payload: {
+      nodes: { id: string; label: string }[];
+      edges: { source: string; target: string }[];
+    },
   ): Promise<void> {
     try {
-      const transcript = payload.nodes.map((n) => `[${n.id}]: ${n.label}`).join('\n');
+      const transcript = payload.nodes
+        .map((n) => `[${n.id}]: ${n.label}`)
+        .join('\n');
       const aiResp = await firstValueFrom(
         this.httpService.post(
           'http://127.0.0.1:8000/summarize',
           { text: transcript },
-          { timeout: 15000 }
-        )
+          { timeout: 15000 },
+        ),
       );
       const summary = aiResp.data?.summary;
       if (!summary) {
