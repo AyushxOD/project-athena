@@ -20,6 +20,8 @@ export class AppGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
   server: Server;
 
+  private readonly aiServiceUrl = process.env.AI_SERVICE_URL || 'http://127.0.0.1:8000';
+
   constructor(
     private readonly httpService: HttpService,
     private readonly appService: AppService,
@@ -116,12 +118,14 @@ export class AppGateway implements OnGatewayConnection, OnGatewayDisconnect {
       if (!claimText) return;
 
      // And change it to this:
-const aiServiceUrl = process.env.AI_SERVICE_URL || 'http://127.0.0.1:8000';
-const aiResp = await firstValueFrom(
-    this.httpService.post(`${aiServiceUrl}/generate-question`,
-          { timeout: 15000 },
-        ),
-      );
+
+     const aiResp = await firstValueFrom(
+      this.httpService.post(
+        `${this.aiServiceUrl}/generate-question`, // <-- USES THE CORRECT URL
+        { text: claimText },
+        { timeout: 15000 }
+      )
+    );
       const aiQuestion = aiResp.data?.question;
       if (!aiQuestion) {
         client.emit('aiError', 'AI returned no question.');
@@ -165,12 +169,12 @@ const aiResp = await firstValueFrom(
       const claimText = node.data.label;
       if (!claimText) return;
       // And change it to this:
-const aiServiceUrl = process.env.AI_SERVICE_URL || 'http://127.0.0.1:8000';
-const aiResp = await firstValueFrom(
-    this.httpService.post(`${aiServiceUrl}/generate-question`,
+      const aiResp = await firstValueFrom(
+        this.httpService.post(
+          `${this.aiServiceUrl}/find-evidence`, // <-- USES THE CORRECT URL
           { text: claimText },
-          { timeout: 30000 },
-        ),
+          { timeout: 30000 }
+        )
       );
       const evidenceList = aiResp.data?.evidence;
       if (!Array.isArray(evidenceList) || evidenceList.length === 0) {
@@ -225,13 +229,13 @@ const aiResp = await firstValueFrom(
       const transcript = payload.nodes
         .map((n) => `[${n.id}]: ${n.label}`)
         .join('\n');
-      const aiResp = await firstValueFrom(
-        this.httpService.post(
-          'http://127.0.0.1:8000/summarize',
-          { text: transcript },
-          { timeout: 15000 },
-        ),
-      );
+        const aiResp = await firstValueFrom(
+          this.httpService.post(
+            `${this.aiServiceUrl}/summarize`, // <-- USES THE CORRECT URL
+            { text: transcript },
+            { timeout: 15000 }
+          )
+        );
       const summary = aiResp.data?.summary;
       if (!summary) {
         client.emit('aiError', 'AI returned empty summary.');
