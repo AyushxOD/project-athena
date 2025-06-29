@@ -74,6 +74,14 @@ def clean_and_parse_json(raw_text: str):
             raise
     raise ValueError(f"No valid JSON found in response: {raw_text}")
 
+
+# --- THIS IS THE NEW ENDPOINT ---
+@app.get("/")
+async def get_status():
+    """Provides a simple status message to confirm the service is online."""
+    return {"status": "Project Athena AI Service is online and operational"}
+
+
 # --- ENDPOINTS ---
 @app.post("/generate-question")
 async def generate_question(claim: Claim):
